@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+from tkinter import ttk
 import webbrowser
 
 try:
@@ -31,8 +32,162 @@ try:
 except Exception:
   pyautogui = None
 
+# ==========================================
+# GITHUB AUTO-SYNC & SPLASH LOADER CONFIG
+# ==========================================
+REPO_URL = "https://github.com/PFVatsim/sirimain.git"
+INSTALL_DIR = Path.home() / "AppData" / "Local" / "SiriVoiceDeck"
+REQ_FILE = INSTALL_DIR / "requirements.txt"
+
+
+class AppLoaderSplash(tk.Tk):
+  """Splash UI with a progress bar and status updates during git sync."""
+
+  def __init__(self):
+    super().__init__()
+
+    self.title("Siri Voice Deck - Initializing")
+    self.geometry("480x240")
+    self.resizable(False, False)
+    self.configure(bg="#07070f")
+
+    # Center Window on Screen
+    self.update_idletasks()
+    width = self.winfo_width()
+    height = self.winfo_height()
+    x = (self.winfo_screenwidth() // 2) - (width // 2)
+    y = (self.winfo_screenheight() // 2) - (height // 2)
+    self.geometry(f"{width}x{height}+{x}+{y}")
+
+    # Header Title
+    self.title_label = tk.Label(
+        self,
+        text="Siri Voice Deck",
+        font=("Consolas", 18, "bold"),
+        fg="#00f0ff",
+        bg="#07070f",
+    )
+    self.title_label.pack(pady=(25, 5))
+
+    # Status Message
+    self.status_label = tk.Label(
+        self,
+        text="Checking repository updates...",
+        font=("Consolas", 10),
+        fg="#e8e8ff",
+        bg="#07070f",
+    )
+    self.status_label.pack(pady=(0, 15))
+
+    # Styled Progress Bar
+    style = ttk.Style(self)
+    style.theme_use("clam")
+    style.configure(
+        "Custom.Horizontal.TProgressbar",
+        troughcolor="#0e0e1c",
+        background="#00f0ff",
+        thickness=16,
+    )
+
+    self.progress = ttk.Progressbar(
+        self,
+        style="Custom.Horizontal.TProgressbar",
+        orient="horizontal",
+        length=400,
+        mode="determinate",
+    )
+    self.progress.pack(pady=5)
+
+    # Time Remaining Label
+    self.time_label = tk.Label(
+        self,
+        text="Estimated time remaining: Calculating...",
+        font=("Consolas", 9, "italic"),
+        fg="#6b6b8f",
+        bg="#07070f",
+    )
+    self.time_label.pack(pady=(5, 15))
+
+    # Start update logic in a separate background thread
+    threading.Thread(target=self.run_update_process, daemon=True).start()
+
+  def set_status(self, text, value, eta_text=""):
+    """Helper to update UI elements safely from background thread."""
+    def _update():
+      self.status_label.config(text=text)
+      self.progress["value"] = value
+      if eta_text:
+        self.time_label.config(text=f"Estimated time remaining: {eta_text}")
+
+    self.after(0, _update)
+
+  def run_update_process(self):
+    """Checks Git for updates, pulls changes, updates dependencies, then launches core app."""
+    try:
+      INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+      git_dir = INSTALL_DIR / ".git"
+
+      # Step 1: Connecting
+      self.set_status("Connecting to GitHub...", 15, "4 seconds")
+      time.sleep(0.4)
+
+      # Step 2: Syncing Repository
+      if git_dir.exists():
+        self.set_status("Checking for changes...", 40, "3 seconds")
+        subprocess.run(
+            ["git", "-C", str(INSTALL_DIR), "pull"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+      else:
+        self.set_status("First-time setup: Cloning repository...", 30, "6 seconds")
+        subprocess.run(
+            ["git", "clone", REPO_URL, str(INSTALL_DIR)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+
+      # Step 3: Dependencies Check
+      if REQ_FILE.exists():
+        self.set_status("Verifying Python dependencies...", 75, "2 seconds")
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                "-r",
+                str(REQ_FILE),
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+
+      # Step 4: Ready
+      self.set_status("All systems ready! Launching app...", 100, "Done!")
+      time.sleep(0.6)
+
+      # Close splash UI and launch main application
+      self.after(0, self.launch_main_app)
+
+    except Exception as e:
+      self.set_status("Offline mode activated (Sync skipped)", 100, "Starting...")
+      time.sleep(1.0)
+      self.after(0, self.launch_main_app)
+
+  def launch_main_app(self):
+    self.destroy()
+    start_core_application()
+
+
+# ==========================================
+# CORE APPLICATION LOGIC
+# ==========================================
 if getattr(sys, "frozen", False):
-  # installed .exe: Program Files isn't writable, so keep settings in %APPDATA%
   BASE = os.path.join(
       os.environ.get("APPDATA", os.path.expanduser("~")), "VoiceDeck"
   )
@@ -41,16 +196,15 @@ else:
   BASE = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(BASE, "data.json")
 
-try:  # own taskbar identity so it pins/groups as "Voice Deck", not as Python
+try:
   import ctypes
-
   ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
       "VoiceDeck.App.1"
   )
 except Exception:
   pass
 
-# ------------------------------------------------------------------ colours
+# colours
 BG = "#07070f"
 PANEL = "#0e0e1c"
 CYAN = "#00f0ff"
@@ -62,15 +216,14 @@ TEXT = "#e8e8ff"
 DIM = "#6b6b8f"
 
 
-# ------------------------------------------------------------------ data
 def load_data():
   try:
     with open(DATA_FILE, "r", encoding="utf-8") as f:
       d = json.load(f)
   except Exception:
     d = {}
-  d.setdefault("apps", {})  # custom/added apps: name -> target
-  d.setdefault("contacts", {})  # name -> {"type": "username"|"id", "value": str}
+  d.setdefault("apps", {})
+  d.setdefault("contacts", {})
   return d
 
 
@@ -83,7 +236,6 @@ def norm(s):
   return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
-# ------------------------------------------------------------------ app catalog
 def env(name):
   return os.environ.get(name, "")
 
@@ -97,7 +249,6 @@ def first_existing(paths):
 
 
 def start_menu_shortcuts():
-  """Return {display name: path to .lnk} for every Start Menu shortcut."""
   roots = [
       os.path.join(
           env("ProgramData"), r"Microsoft\Windows\Start Menu\Programs"
@@ -125,7 +276,6 @@ def steam_roots():
 
 
 def steam_games():
-  """Scan every Steam library for installed games -> {name: steam://rungameid/ID}"""
   libs = set()
   for root in steam_roots():
     libs.add(os.path.join(root, "steamapps"))
@@ -152,8 +302,6 @@ def steam_games():
 
 
 def default_apps(shortcuts):
-  """The built-in apps with their usual install locations."""
-
   def lnk(*keys):
     for name, path in shortcuts.items():
       if all(k in name.lower() for k in keys):
@@ -197,7 +345,6 @@ def default_apps(shortcuts):
 
 
 def build_catalog(data):
-  """name -> target, everything the app can open (priority: custom > defaults > games > start menu)."""
   shortcuts = start_menu_shortcuts()
   cat = {}
   cat.update(shortcuts)
@@ -211,7 +358,7 @@ def launch(target):
   if re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", target) and not re.match(
       r"^[a-zA-Z]:[\\/]", target
   ):
-    os.startfile(target)  # protocol link (steam://, discord://, spotify: ...)
+    os.startfile(target)
   else:
     os.startfile(target)
 
@@ -230,10 +377,8 @@ def discord_running():
 
 
 def find_discord_window():
-  """Largest visible window whose title ends in 'Discord' (not a browser tab)."""
   try:
     import pygetwindow as gw
-
     best = None
     for w in gw.getAllWindows():
       t = w.title or ""
@@ -251,11 +396,6 @@ def find_discord_window():
 
 
 def discord_call(contact, cal=None):
-  """Username: open Discord -> Ctrl+K quick switcher -> open the DM -> click the call button
-
-  (position saved by 'calibrate'; without it, falls back to Discord's Ctrl+[ shortcut).
-  User ID: opens their profile only.
-  """
   kind, val = contact["type"], contact["value"]
   if kind == "id":
     os.startfile("discord://-/users/%s" % val)
@@ -263,7 +403,7 @@ def discord_call(contact, cal=None):
   if not pyautogui:
     raise RuntimeError("pyautogui missing - can't drive Discord")
   was_running = discord_running()
-  os.startfile("discord://")  # brings Discord to the front (or launches it)
+  os.startfile("discord://")
   time.sleep(2.0 if was_running else 10.0)
   win = find_discord_window()
   if win:
@@ -274,11 +414,11 @@ def discord_call(contact, cal=None):
     except Exception:
       pass
     time.sleep(0.5)
-  pyautogui.hotkey("ctrl", "k")  # quick switcher
+  pyautogui.hotkey("ctrl", "k")
   time.sleep(0.7)
   pyautogui.typewrite(val, interval=0.05)
-  time.sleep(1.2)  # let results load
-  pyautogui.press("enter")  # opens the DM
+  time.sleep(1.2)
+  pyautogui.press("enter")
   time.sleep(1.8)
   if cal:
     win = find_discord_window()
@@ -296,7 +436,6 @@ def discord_call(contact, cal=None):
   )
 
 
-# ------------------------------------------------------------------ matching
 def best_match(spoken, names):
   key = norm(spoken)
   if not key or not names:
@@ -306,7 +445,6 @@ def best_match(spoken, names):
     return by_norm[key]
   starts = [k for k in by_norm if k.startswith(key) or key.startswith(k)]
   if starts:
-    # prefer the closest in length
     return by_norm[min(starts, key=lambda k: abs(len(k) - len(key)))]
   close = difflib.get_close_matches(key, list(by_norm), n=1, cutoff=0.6)
   return by_norm[close[0]] if close else None
@@ -327,17 +465,15 @@ def suggest(query, names, limit=8):
   return (starts + contains + fuzzy)[:limit]
 
 
-# ------------------------------------------------------------------ UI
 class App:
-
   def __init__(self, root):
     self.root = root
     self.data = load_data()
     self.catalog = build_catalog(self.data)
     self.q = queue.Queue()
-    self.state = None  # add-flow state
+    self.state = None
     self.tmp = {}
-    self.mode = "idle"  # idle / listening / heard / error
+    self.mode = "idle"
     self.listening = True
     self.t0 = time.time()
     self.heard_until = 0
@@ -397,7 +533,6 @@ class App:
         bd=8,
     )
     self.entry.pack(fill="x")
-    # Updated to allow input/text up to 30,000 characters
     self.entry.config(validate="key")
     self.entry.bind("<KeyRelease>", self.on_key)
     self.entry.bind("<Return>", self.on_enter)
@@ -439,7 +574,6 @@ class App:
     self.poll()
     self.start_voice()
 
-  # ---------------- animation with non-overlapping circles & speech reaction
   def animate(self):
     c = self.canvas
     c.delete("all")
@@ -448,7 +582,6 @@ class App:
     t = time.time() - self.t0
     now = time.time()
 
-    # Determine speech reaction amplitude from current microphone level
     lvl = getattr(self, "level", 0.0)
     current_reaction = min(max(lvl / 2000.0, 0.0), 2.0)
 
@@ -461,7 +594,6 @@ class App:
     else:
       col, amp = PURPLE, 0.3
 
-    # --- DRAW NON-OVERLAPPING CONCENTRIC RINGS ---
     base_radii = [55, 95, 135, 175, 215]
     for i, base_r in enumerate(base_radii):
       r = base_r + int(current_reaction * 12 * (i + 1) * 0.3)
@@ -470,13 +602,11 @@ class App:
           cx - r, cy - r, cx + r, cy + r, outline=ring_color, width=2
       )
 
-    # --- CENTER CORE PULSAR ---
     pulse = 28 + int(current_reaction * 15)
     for k, cc in enumerate((PURPLE, PINK, col)):
       rr = max(5, pulse - k * 6)
       c.create_oval(cx - rr, cy - rr, cx + rr, cy + rr, fill=cc, outline="")
 
-    # --- SPECTRUM BARS ---
     num_bars = 48
     outer_radius = 240 + int(current_reaction * 15)
     for i in range(num_bars):
@@ -488,7 +618,6 @@ class App:
       y2 = cy + math.sin(ang) * (outer_radius + bar_len)
       c.create_line(x1, y1, x2, y2, fill=col if i % 3 else PINK, width=2)
 
-    # --- LIVE MIC LEVEL BAR ---
     thr = getattr(self, "thr", 0.0)
     if getattr(self, "stream", None) is not None:
       bw = 360
@@ -508,7 +637,6 @@ class App:
 
     self.root.after(33, self.animate)
 
-  # ---------------- voice
   def start_voice(self):
     if sr is None or sd is None:
       self.set_status("speech/mic library missing - typing only", RED)
@@ -536,8 +664,7 @@ class App:
       self.mode = "error"
       self.set_status("no microphone found - typing only", RED)
       self.log(
-          "Windows reports no input device. Plug one in / enable it in Sound"
-          " settings.",
+          "Windows reports no input device. Plug one in / enable it in Sound settings.",
           RED,
       )
       return
@@ -554,7 +681,6 @@ class App:
     self.root.bind("<F2>", lambda e: self.next_device())
 
   def open_stream(self):
-    """Open the current device; falls back to its native sample rate if 16 kHz is refused."""
     if self.stream is not None:
       try:
         self.stream.stop()
@@ -584,8 +710,7 @@ class App:
         self.mode = "listening"
         self.set_status("listening  -  mic: %s" % name[:40], CYAN)
         self.log(
-            "F2 = switch microphone.  Watch the level bar under the orb: it"
-            " should jump when you talk.",
+            "F2 = switch microphone.  Watch the level bar under the orb: it should jump when you talk.",
             DIM,
         )
         return
@@ -612,9 +737,8 @@ class App:
     return math.sqrt(sum(x * x for x in a) / len(a))
 
   def vad_loop(self):
-    """Tiny voice-activity detector: record while you talk, send each phrase to recognition."""
     noise = None
-    preroll = collections.deque(maxlen=3)  # keep 0.3s before speech starts
+    preroll = collections.deque(maxlen=3)
     frames, silent, talking = [], 0, False
     while True:
       chunk = self.audio_q.get()
@@ -636,18 +760,18 @@ class App:
       elif talking:
         frames.append(chunk)
         silent += 1
-        if silent >= 7:  # 0.7s of quiet = phrase finished
+        if silent >= 7:
           self.finish_phrase(frames)
           frames, silent, talking = [], 0, False
       else:
         noise = noise * 0.95 + level * 0.05
         preroll.append(chunk)
-      if talking and len(frames) > 80:  # 8s cap
+      if talking and len(frames) > 80:
         self.finish_phrase(frames)
         frames, silent, talking = [], 0, False
 
   def finish_phrase(self, frames):
-    if len(frames) < 4:  # too short, probably a click
+    if len(frames) < 4:
       return
     data = b"".join(frames)
     threading.Thread(
@@ -665,8 +789,7 @@ class App:
           (
               "err",
               (
-                  "Heard sound but couldn't make out words - speak a bit"
-                  " closer/clearer."
+                  "Heard sound but couldn't make out words - speak a bit closer/clearer."
               ),
           )
       )
@@ -709,7 +832,6 @@ class App:
       pass
     self.root.after(100, self.poll)
 
-  # ---------------- helpers
   def set_status(self, text, colour=CYAN):
     self.status.config(text=text, fg=colour)
 
@@ -721,9 +843,8 @@ class App:
       return list(self.data["contacts"].keys())
     return list(self.catalog.keys())
 
-  # ---------------- commands
   def handle_voice(self, text):
-    if self.state:  # don't fire commands while in the add flow
+    if self.state:
       return
     self.run_command(text)
 
@@ -751,8 +872,7 @@ class App:
       self.set_status("calling %s..." % hit, PINK)
       self.log(
           (
-              "Driving Discord - don't touch the keyboard for a few"
-              " seconds..."
+              "Driving Discord - don't touch the keyboard for a few seconds..."
           ),
           PINK,
       )
@@ -777,12 +897,10 @@ class App:
       except Exception as e:
         self.log("Couldn't open %s: %s" % (hit, e), RED)
 
-  # ---------------- calibrate the Discord call button
   def begin_calibrate(self):
     self.log(
         (
-            "Switch to Discord, open a chat with someone, and HOLD your mouse"
-            " over the CALL (phone) button until the countdown ends."
+            "Switch to Discord, open a chat with someone, and HOLD your mouse over the CALL (phone) button until the countdown ends."
         ),
         PINK,
     )
@@ -798,8 +916,7 @@ class App:
       self.set_status("calibration failed", RED)
       self.log(
           (
-              "Couldn't find the Discord window. Keep Discord open and"
-              " visible, then type calibrate again."
+              "Couldn't find the Discord window. Keep Discord open and visible, then type calibrate again."
           ),
           RED,
       )
@@ -817,12 +934,10 @@ class App:
     self.set_status("calibrated!", GREEN)
     self.log(
         (
-            "Saved the call button position. Now try:  call <name>  (keep"
-            " Discord's window size the same)."
+            "Saved the call button position. Now try:  call <name>  (keep Discord's window size the same)."
         )
     )
 
-  # ---------------- add flow
   def begin_add(self):
     self.state = "type"
     self.tmp = {}
@@ -845,7 +960,6 @@ class App:
         "Escape",
     ):
       return
-    # Ensure text entry stays well within the expanded character handling limits (up to 30,000 characters)
     if len(self.entry.get()) > 30000:
       self.entry.delete(30000, "end")
     self.refresh_suggestions()
@@ -898,7 +1012,6 @@ class App:
     return "break"
 
   def chosen(self):
-    """Selected suggestion if any, else raw text."""
     raw = self.entry.get().strip()
     cur = self.lb.curselection()
     if cur and self.suggestions:
@@ -910,7 +1023,6 @@ class App:
     st = self.state
 
     if st is None:
-      # in normal mode a highlighted "open xyz" suggestion wins only if the user typed a partial name
       cmd = (
           pick
           if pick.lower().startswith(("open ", "call "))
@@ -999,8 +1111,7 @@ class App:
       if self.tmp["kind"] == "id" and not raw.isdigit():
         self.log(
             (
-                "A user ID is only numbers (Discord > Settings > Advanced >"
-                " Developer Mode, then right click user > Copy User ID)."
+                "A user ID is only numbers (Discord > Settings > Advanced > Developer Mode, then right click user > Copy User ID)."
             ),
             RED,
         )
@@ -1017,11 +1128,13 @@ class App:
     self.refresh_suggestions()
 
 
-def main():
+def start_core_application():
   root = tk.Tk()
   App(root)
   root.mainloop()
 
 
 if __name__ == "__main__":
-  main()
+  # Launch the modern background sync splash screen first
+  splash = AppLoaderSplash()
+  splash.mainloop()
